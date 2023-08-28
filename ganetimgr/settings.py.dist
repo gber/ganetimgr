@@ -39,6 +39,7 @@ TIME_ZONE = 'Europe/Athens'
 _ = lambda s: s
 
 LANGUAGES = (
+    ('de', 'Deutsch'),
     ('el', u'Ελληνικά'),
     ('en', _('English')),
 )
