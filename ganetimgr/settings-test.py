@@ -131,6 +131,7 @@ BRANDING = {
     "FAVICON": "/static/ganetimgr/img/favicon.ico",
     "MOTTO": "virtual private servers",
     "FOOTER_ICONS_IFRAME": True,
+    "SHOW_WELCOME_TEXT": True,
     # show the administrative contact
     # option when creating a new vm
     "SHOW_ADMINISTRATIVE_FORM": True,

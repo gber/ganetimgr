@@ -82,6 +82,7 @@
 						</div>
 					{% endif %}
 						<div class="{% if BRANDING.FEED_URL %}span3{% else %}span4{% endif %} sidebar">
+						{% if BRANDING.SHOW_WELCOME_TEXT %}
 							<div class="widget">
 								<div class="row-fluid">
 									<h2><i class="fa fa-cloud"></i> {% trans "Welcome" %}</h2>
@@ -112,6 +113,7 @@
 									</div>
 								</div>
 							</div>
+						{% endif %}
 						</div>
 						<div class="{% if BRANDING.FEED_URL %}span3{% else %}span4{% endif %} sidebar">
 							<div class="widget">
