@@ -21,82 +21,120 @@
 			margin-bottom: 0px;
 		}
 	</style>
-	<script type="text/javascript" src="{% static 'noVNC/include/util.js' %}"></script>
-	<script type="text/javascript">
-		// Set include path for noVNC scripts
-		var INCLUDE_URI = "{% static 'noVNC/include/' %}";
+	<script type="module">
+		import RFB from '{% static "noVNC/core/rfb.js" %}';
+		import KeyTable from '{% static "noVNC/core/input/keysym.js" %}';
+		import KeySym from '{% static "noVNC/core/input/keysymdef.js" %}';
+
 		// Set path for proxy requests
-		var PROXY_REQUEST_URI = "{% url 'instance-novnc-proxy' cluster.slug instance %}";
-		var rfb;
-		var vnc_canvas;
-		var ctrlOn = false;
-		var altOn = false;
-		Util.load_scripts(["webutil.js", "base64.js", "websock.js", "des.js", "keysymdef.js", "keyboard.js", "input.js", "display.js", "jsunzip.js", "rfb.js", "keysym.js"]);
+		const PROXY_REQUEST_URI = "{% url 'instance-novnc-proxy' cluster.slug instance %}";
+		const USE_TLS = {% if use_tls %}true{% else %}false{% endif %};
 
-		window.onscriptsload = function() {
-			var rfb;
-			var connect = $('#connect');
-			var connected = false;
-			var ctrlaltdelete = $('#ctrlaltdelete');
-			var toggleCtrlButton = $('#toggleCtrlButton');
-			var pasteButton = $('#pasteButton');
-			var toggleAltButton = $('#toggleAltButton');
-			var vnc_errors = $("#vnc_errors");
-			var vnc_status_bar = $("#VNC_status_bar");
-			var vnc_canvas = $('#VNC_canvas');
-			var vnc_screen = $('#VNC_screen');
-			var pasteArea = $('input#paste');
-			pasteArea.hide();
-			ctrlaltdelete.addClass('disabled');
-			toggleCtrlButton.addClass('disabled');
-			pasteButton.addClass('disabled').prop('disabled', true);
-			toggleAltButton.addClass('disabled');
+		let rfb;
 
-            function stop() {
-				var rfb;
-				if (rfb != undefined) {
-					rfb.disconnect();
-					rfb = undefined;
+		let ctrlOn = false;
+		let altOn = false;
+		let connected = false;
+
+		const connectButton = $('#connect');
+		const ctrlaltdeleteButton = $('#ctrlaltdelete');
+		const toggleCtrlButton = $('#toggleCtrlButton');
+		const pasteButton = $('#pasteButton');
+		const toggleAltButton = $('#toggleAltButton');
+		const vnc_status_bar = $("#VNC_status_bar");
+		const vnc_screen = $('#VNC_screen');
+		const pasteArea = $('input#paste');
+
+		function updateConnected(is_connected) {
+			connected = is_connected;
+
+			if (is_connected) {
+				connectButton.addClass('enabled').removeClass('btn-success').addClass('btn-danger').text('Disconnect');
+				ctrlaltdeleteButton.removeClass('disabled');
+				toggleCtrlButton.removeClass('disabled');
+				toggleAltButton.removeClass('disabled');
+				pasteButton.removeClass('disabled').prop('disabled', false);
+			} else {
+				connectButton.removeClass('enabled').removeClass('btn-danger').addClass('btn-success').text('Connect');
+				ctrlaltdeleteButton.addClass('disabled');
+				toggleCtrlButton.addClass('disabled');
+				toggleAltButton.addClass('disabled');
+				pasteButton.addClass('disabled').prop('disabled', true);
+				pasteArea.val('').hide();
+			}
+		}
+
+		function updateState(state, msg) {
+			let klass;
+			switch (state) {
+				case 'securityfailed':
+				case 'error':
+					klass = "label label-error";
+					break;
+				case 'normal':
+					klass = "label label-success";
+					break;
+				case 'disconnected':
+					klass = "label label-info";
+					break;
+				default:
+					klass = "label";
+			}
+			if (typeof msg !== "undefined") {
+				vnc_status_bar.attr("class", klass).html(msg);
+			}
+
+			updateConnected(state == "normal");
+		}
+
+		function stop() {
+			if (typeof rfb !== "undefined") {
+				rfb.disconnect();
+				rfb = undefined;
+			}
+		}
+
+		function start() {
+			let status, host, port, password, path;
+			$.ajax({
+				async: false,
+				url: PROXY_REQUEST_URI,
+				type: "POST",
+				dataType: "json",
+				success: (data, textStatus, xhr) => {
+						status = textStatus;
+						[host, port, password, path] = data;
+				},
+				error: (xhr, textStatus, error) => { status = textStatus },
+			});
+			if (status !== "success") {
+				updateState("error",
+					{% blocktrans %}`Failed to connect to noVNC authentication proxy (${status})`{% endblocktrans %});
+			}
+
+			let url = `${(window.location.protocol === "https:") || use_tls ? "wss" : "ws"}://${host}:${port}/${path}`;
+			rfb = new RFB(document.querySelector("#VNC_screen"), url, {
+				'shared' : true,
+			});
+			rfb.addEventListener("connect",  e => updateState("normal", {% blocktrans %}"Connected"{% endblocktrans %}));
+			rfb.addEventListener("disconnect",  e => {
+				let msg = e.detail.clean ? {% blocktrans %}'Click "Connect" to connect'{% endblocktrans %} :
+					{% blocktrans %}"Disconnected due to an error"{% endblocktrans %};
+				updateState(e.clean ? "disconnected" : "error", msg);
+			});
+			rfb.addEventListener("securityfailure",  e => {
+				let msg = {% blocktrans %}"Security error:"{% endblocktrans %};
+				if (typeof e["details"] !== "undefined") {
+					msg += ` ${e.details}`;
 				}
-			}
+				msg += ` (Code: ${e.code})`;
+				updateState("securityfailed", msg);
+			});
+			rfb.focus();
+		}
 
-			function start() {
-				$.ajax({
-					async : false,
-					url : PROXY_REQUEST_URI,
-					type : "POST",
-					dataType : "json",
-					success : function(data) {
-						host = data[0];
-						port = data[1];
-						password = data[2];
-						path = data[3];
-					}
-				});
-				// if (!show_errors()) return false;
-				use_tls = {% if use_tls %}true{% else %}false{% endif %};
-				rfb = new RFB({
-					'target' : document.getElementById('VNC_canvas'),
-					'encrypt' : use_tls,
-					'true_color' : true,
-					'local_cursor' : true,
-					'shared' : true,
-					'updateState' : updateState,
-				});
-				rfb.connect(host, port, password, path);
-				return false;
-			}
-
-			function show_errors() {
-				if (host === false || port === false || password === false) {
-					connected = false;
-					vnc_status_bar.attr("class", "label label-error").html("Probably your proxy is not running or some errors occured. Try again.");
-					return false;
-				}
-				return true;
-			}
-
-			var pasteSpecialKeys = {
+		pasteArea.on('keydown keyup', evt => {
+			const pasteSpecialKeys = {
 				enter: {
 					descr: function(i) { return i == "Enter" },
 					code: function(i) { return i == 10 || i == 13 }
@@ -106,149 +144,112 @@
 					code: function(i) { return i == 27 }
 				}
 			}
-			$('#paste').on('keydown keyup keypress', function(evt) {
-				evt.stopPropagation(); // don't propagate to noVNC
-				if (!!evt.key) {
-					var way = 'descr';
-				} else if (!!evt.which || !!evt.keyCode) {
-					var way = 'code';
-				} else {
-					// abort!
-					return true;
-				}
-				var testKey = function(koi) {
-					return way == 'descr' ?
-					pasteSpecialKeys[koi][way](evt.key) :
-					pasteSpecialKeys[koi][way](evt.which || evt.keyCode);
-				}
-				if (connected && evt.type == "keypress") {
-					var reset = false;
-					if (testKey('enter')) {
-						evt.preventDefault();
-						var text = $(this).val();
-						for (var i=0; i < text.length; i+=1) {
-							rfb.sendKey(text.charCodeAt(i));
-						}
-						rfb.sendKey(XK_Return);
-						reset = true;
-					} else if (testKey('esc')) {
-						// evt.preventDefault();
-						reset = true;
+
+			evt.stopPropagation(); // don't propagate to noVNC
+
+			let way = "";
+			if (!!evt.key) {
+				way = 'descr';
+			} else if (!!evt.which || !!evt.keyCode) {
+				way = 'code';
+			} else {
+				// abort!
+				return true;
+			}
+
+			const testKey = koi => {
+				return way === 'descr' ?
+				pasteSpecialKeys[koi][way](evt.key) :
+				pasteSpecialKeys[koi][way](evt.which || evt.keyCode);
+			}
+			if (connected && evt.type == "keydown") {
+				let reset = false;
+				if (testKey('enter')) {
+					evt.preventDefault();
+					let text = $(evt.currentTarget).val();
+					for (let i=0; i < text.length; i++) {
+						rfb.sendKey(KeySym.lookup(text.charCodeAt(i)));
 					}
-					if (reset) {
-						$(this).val('').hide();
-					}
+					rfb.sendKey(KeyTable.XK_Return);
+					reset = true;
+				} else if (testKey('esc')) {
+					// evt.preventDefault();
+					reset = true;
 				}
-			});
-
-			function updateState(rfb, state, oldstate, msg) {
-				var klass;
-				switch (state) {
-					case 'failed':
-					case 'fatal':
-						klass = "label label-error";
-						break;
-					case 'normal':
-						klass = "label label-success";
-						break;
-					case 'disconnected':
-					case 'loaded':
-						klass = "label label-info";
-						break;
-					case 'password':
-						msg = 'Password required';
-						klass = "label";
-						break;
-					default:
-						klass = "label";
+				if (reset) {
+					$(evt.currentTarget).val('').hide();
 				}
+			}
+		});
 
-				if (state == "normal") {
-					connected = true;
-					connect.addClass('enabled').removeClass('btn-success').addClass('btn-danger').text('Disconnect');
-					ctrlaltdelete.removeClass('disabled');
-					toggleCtrlButton.removeClass('disabled');
-					toggleAltButton.removeClass('disabled');
-					vnc_canvas.addClass("connected");
-					pasteButton.removeClass('disabled').prop('disabled', false);
+		connectButton.click(event => {
+			event.preventDefault();
+
+			if ($(event.currentTarget).hasClass('enabled')) {
+				rfb.disconnect();
+				connected = false;
+			} else {
+				connected = true;
+				start();
+			}
+		});
+
+		pasteButton.click(function (evt) {
+			if ($(evt.currentTarget).prop('disabled')) {
+				evt.preventDefault();
+				return false;
+			} else {
+				pasteArea.toggle().filter(':visible').focus();
+			}
+		});
+
+		ctrlaltdeleteButton.click(function(event) {
+			event.preventDefault();
+
+			if (!$(event.currentTarget).hasClass('disabled')) {
+				rfb.sendCtrlAltDel();
+			}
+		});
+
+		toggleCtrlButton.click(function(event) {
+			event.preventDefault();
+
+			if (!$(event.currentTarget).hasClass('disabled')) {
+				if(!ctrlOn) {
+					rfb.sendKey(KeyTable.XK_Control_L, null, true);
+					$(event.currentTarget).button('toggle');
+					ctrlOn = true;
 				} else {
-					vnc_canvas.removeClass("connected");
-					connected = false;
-					connect.removeClass('enabled').removeClass('btn-danger').addClass('btn-success').text('Connect');
-					ctrlaltdelete.addClass('disabled');
-					toggleCtrlButton.addClass('disabled');
-					toggleAltButton.addClass('disabled');
-					pasteButton.addClass('disabled').prop('disabled', true);
-					pasteArea.val('').hide();
-				}
-
-				if (msg != undefined) {
-					vnc_status_bar.attr("class", klass).html(msg);
+					rfb.sendKey(KeyTable.XK_Control_L, null, false);
+					$(event.currentTarget).button('toggle');
+					ctrlOn = false;
 				}
 			}
 
+			return false;
+		});
 
-			connect.click(function(event) {
-				event.preventDefault();
-				var $this = $(this);
-				if ($this.hasClass('enabled')) {
-					rfb.disconnect();
-					connected = false;
+		toggleAltButton.click(function(event) {
+			event.preventDefault();
+
+			if (!$(event.currentTarget).hasClass('disabled')) {
+				if (!altOn) {
+					rfb.sendKey(KeyTable.XK_Alt_L, null, true);
+					$(event.currentTarget).button('toggle');
+					altOn = true;
 				} else {
-					connected = true;
-					start();
-				}
-
-			});
-
-			pasteButton.click(function (evt) {
-				if ($(this).prop('disabled')) {
-					evt.preventDefault();
-					return false;
-				} else {
-					pasteArea.toggle().
-					filter(':visible').focus();
-				}
-			});
-
-			ctrlaltdelete.click(function(event) {
-				event.preventDefault();
-				if (!$(this).hasClass('disabled')) {
-					rfb.sendCtrlAltDel();
-				}
-			});
-			toggleCtrlButton.click(function(event) {
-				event.preventDefault();
-				if (!$(this).hasClass('disabled')) {
-					if(ctrlOn === false) {
-						rfb.sendKey(XK_Control_L, true);
-						$(this).button('toggle');
-						ctrlOn = true;
-				} else if(ctrlOn === true) {
-					rfb.sendKey(XK_Control_L, false);
-					$(this).button('toggle');
-					ctrlOn = false;
-				}
-				}
-				return false;
-			});
-			toggleAltButton.click(function(event) {
-				event.preventDefault();
-				if (!$(this).hasClass('disabled')) {
-					if(altOn === false) {
-						rfb.sendKey(XK_Alt_L, true);
-						$(this).button('toggle');
-						altOn = true;
-				} else if(altOn === true) {
-					rfb.sendKey(XK_Alt_L, false);
-					$(this).button('toggle');
+					rfb.sendKey(KeyTable.XK_Alt_L, null, false);
+					$(event.currentTarget).button('toggle');
 					altOn = false;
 				}
-				}
-				return false;
-			});
-			$(window).bind("unload", stop);
-		};
+			}
+
+			return false;
+		});
+
+		$(window).bind("unload", stop);
+
+		updateConnected(false);
 	</script>
 	{% endif %}
 {% endblock %}
@@ -283,14 +284,8 @@
 					<button id="pasteButton" class="btn">Paste Text</button>
 					<input type="text" class="span4" id="paste" placeholder="Paste text and press enter"></input>
 				</div>
-				<div id="VNC_screen">
-					<span id="VNC_status_bar" class="label label-info">Click Connect to... connect</span>
-					<br>
-					<br>
-					<canvas id="VNC_canvas">
-						{% blocktrans %}Canvas is not supported in your browser. Please use new versions
-						of Chrome or Firefox.{% endblocktrans %}
-					</canvas>
+				<div id="VNC_screen" style="display: inline-block;">
+					<span id="VNC_status_bar" class="label label-info">{% trans 'Click "Connect" to connect' %}</span>
 				</div>
 			</div>
 		</div>
