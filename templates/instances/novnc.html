@@ -178,6 +178,7 @@
 				}
 				if (reset) {
 					$(evt.currentTarget).val('').hide();
+					rfb.focus();
 				}
 			}
 		});
@@ -226,6 +227,8 @@
 				}
 			}
 
+			rfb.focus();
+
 			return false;
 		});
 
@@ -243,6 +246,8 @@
 					altOn = false;
 				}
 			}
+
+			rfb.focus();
 
 			return false;
 		});
